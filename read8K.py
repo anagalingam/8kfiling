@@ -1,9 +1,32 @@
 import numpy as np
+import pandas as pd
 import gzip
 import re
+import joblib
+from nltk import word_tokenize, pos_tag
 from nltk.corpus import wordnet, stopwords
 from nltk.stem import WordNetLemmatizer
-from collections import Counter
+from sklearn.feature_extraction.text import CountVectorizer
+from collections import defaultdict
+
+
+def getPOS( posTag ):
+    if posTag.startswith('N'):
+        return wordnet.NOUN
+    elif posTag.startswith('V'):
+        return wordnet.VERB
+    elif posTag.startswith('J'):
+        return wordnet.ADJ
+    elif posTag.startswith('R'):
+        return wordnet.ADV
+    else:
+        return None
+
+class LemmaTokenizer(object):
+    def __init__(self):
+        self.wnl = WordNetLemmatizer()
+    def __call__(self,text):
+        return [self.wnl.lemmatize(w[0], getPOS(w[1])) for w in filter(lambda x: getPOS(x[1]),pos_tag(word_tokenize(text)))]
 
 def getTimestamp_from8K( timeString ):
     assert( type(timeString) == str )
@@ -17,6 +40,8 @@ def getType_from8K( eventString ):
     return res[1:]
 
 def read8KDoc( ticker ):
+    assert isinstance(ticker,str)
+
     with gzip.open('8K-gz/'+ticker+'.gz','rb') as file8k:
         fileText = file8k.read()
     docs = fileText.split('</DOCUMENT>')
@@ -26,61 +51,76 @@ def read8KDoc( ticker ):
         if len(lines) == 0:
             continue
         thisDoc = {}
-        thisDoc['Date'] = getTimestamp_from8K(lines[2])
-        thisDoc['Type'] = getType_from8K(lines[3])
-        thisDoc['Text'] = '\n'.join(lines[5+len(thisDoc['Type']):])
+        thisDoc['ticker'] = ticker
+        thisDoc['date'] = getTimestamp_from8K(lines[2])
+        thisDoc['type'] = getType_from8K(lines[3])
+        thisDoc['text'] = '\n'.join(lines[5+len(thisDoc['type']):])
         result.append(thisDoc)
     return result
 
-def getPOS( word ):
-    if word.startswith('V'):
-        return wordnet.VERB
-    elif word.startswith('J'):
-        return wordnet.ADJ
-    elif word.startswith('R'):
-        return wordnet.ADV
-    else:
-        return wordnet.NOUN
-
-def buildUnigramModel( tickerList ):
-    assert( type(tickerList) == list )
-    if( len(tickerList) == 0 ):
-        return None
-    assert( type(tickerList[0]) == str)
-
-    model = Counter()
-    wordRegex = r'\b\w+\b'
-    
-    # Get word counts across all 8K docs
+def getAll8KDoc( tickerList ):
+    res = []
     for ticker in tickerList:
         companyDocs = read8KDoc( ticker )
         for doc in companyDocs:
-            words = re.findall(r'\b\w+\b', doc['Text'].lower())
-            for word in words:
-                model[word] += 1
-    
-    # Remove low freq words, stop words, and numbers
-    stopWords = stopwords.words('english')
+            res.append(doc)
+    return res
 
-    for word in model.keys():
-        if model[word] < 10:
-            del model[word]
-        if word in stopWords:
-            del model[word]
-        if not re.search(r'[a-zA-Z]',word):
-            del model[word]
+# Splits on doc timestamps < date
+def split8KDocs( docList , date ):
+    assert isinstance(docList, list)
+    assert isinstance(date, np.datetime64)
+
+    before = []
+    after = []
+
+    for doc in docList:
+        if doc['date'] < date:
+            before.append(doc)
+        else:
+            after.append(doc)
     
-    # Lemmatize
+    return before, after
+
+def dump8KdocList( docList , name ):
+    assert isinstance( docList, list )
+    assert isinstance( name, str )
+
+    joblib.dump(docList, 'data8K/'+name)
+    return
+
+def load8KdocList( name ):
+    assert isinstance( name , str )
+
+    return joblib.load('data8K/'+name)
+
+def buildTermDocMatrix( docList ):
+    vect = CountVectorizer(tokenizer=LemmaTokenizer())
+    return vect.fit_transform([docList['text'] for doc in docList])
+
+def getTargets( docList , companyPrices , daysForward):
+    docTargets = []
+    for doc in docList:
+        currCompIndex = companyPrices[doc['ticker']].index.get_loc(doc['date'])
+        currSNPIndex = companyPrices[doc['snp']].index.get_loc(doc['date'])
+        
+    return
+# This function created unigram.p, inefficient. Dictionary of lists of doc num with repitition
+def buildUnigramModel( companyInfo ):
+    assert isinstance( companyInfo , pd.DataFrame )
+
+    model = defaultdict(list)
     lemmatizer = WordNetLemmatizer()
-    for word in model.keys():
-        newWord = lemmatizer.lemmatize(word, getPOS(word))
-        if( word != newWord ):
-            count = model[word]
-            del model[word]
-            if newWord in model.keys():
-                model[newWord] += count
-            else:
-                model[newWord] = count
+    
+    docCount = 0
+    
+    # Get word counts across all 8K docs
+    for ticker in companyInfo.index.values:
+        print docCount
+        companyDocs = read8KDoc(ticker)
+        for doc in companyDocs:
+            docCount += 1
+            words = [lemmatizer.lemmatize(w[0],getPOS(w[1])) for w in pos_tag(word_tokenize(doc['text'].lower()))]
+            for word in words:
+                model[word].append(docCount-1)
     return model
-
-
