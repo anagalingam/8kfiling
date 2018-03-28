@@ -1,13 +1,10 @@
 import numpy as np
-import pandas as pd
 import gzip
 import re
-import joblib
 from nltk import word_tokenize, pos_tag
-from nltk.corpus import wordnet, stopwords
+from nltk.corpus import wordnet
 from nltk.stem import WordNetLemmatizer
 from sklearn.feature_extraction.text import CountVectorizer
-from collections import defaultdict
 
 
 def getPOS( posTag ):
@@ -66,7 +63,7 @@ def getAll8KDoc( tickerList ):
             res.append(doc)
     return res
 
-# Splits on doc timestamps < date
+# Splits on doc timestamps < date for train/test split
 def split8KDocs( docList , date ):
     assert isinstance(docList, list)
     assert isinstance(date, np.datetime64)
@@ -82,45 +79,8 @@ def split8KDocs( docList , date ):
     
     return before, after
 
-def dump8KdocList( docList , name ):
-    assert isinstance( docList, list )
-    assert isinstance( name, str )
-
-    joblib.dump(docList, 'data8K/'+name)
-    return
-
-def load8KdocList( name ):
-    assert isinstance( name , str )
-
-    return joblib.load('data8K/'+name)
-
 def buildTermDocMatrix( docList ):
     vect = CountVectorizer(tokenizer=LemmaTokenizer())
-    return vect.fit_transform([docList['text'] for doc in docList])
+    termDoc = vect.fit_transform([doc['text'] for doc in docList])
+    return vect, termDoc
 
-def getTargets( docList , companyPrices , daysForward):
-    docTargets = []
-    for doc in docList:
-        currCompIndex = companyPrices[doc['ticker']].index.get_loc(doc['date'])
-        currSNPIndex = companyPrices[doc['snp']].index.get_loc(doc['date'])
-        
-    return
-# This function created unigram.p, inefficient. Dictionary of lists of doc num with repitition
-def buildUnigramModel( companyInfo ):
-    assert isinstance( companyInfo , pd.DataFrame )
-
-    model = defaultdict(list)
-    lemmatizer = WordNetLemmatizer()
-    
-    docCount = 0
-    
-    # Get word counts across all 8K docs
-    for ticker in companyInfo.index.values:
-        print docCount
-        companyDocs = read8KDoc(ticker)
-        for doc in companyDocs:
-            docCount += 1
-            words = [lemmatizer.lemmatize(w[0],getPOS(w[1])) for w in pos_tag(word_tokenize(doc['text'].lower()))]
-            for word in words:
-                model[word].append(docCount-1)
-    return model
